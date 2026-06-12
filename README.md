@@ -41,7 +41,7 @@ flowchart LR
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/<you>/Stiletto.git", from: "0.1.0")
+    .package(url: "https://github.com/henrydavl/StilettoSwift.git", from: "0.1.1")
 ]
 ```
 
