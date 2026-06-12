@@ -11,6 +11,7 @@ import StilettoMacros
 private let testMacros: [String: Macro.Type] = [
     "Provide": ProvideMacro.self,
     "InjectConstructor": InjectConstructorMacro.self,
+    "LazyInjectConstructor": LazyInjectConstructorMacro.self,
 ]
 
 final class MacroExpansionTests: XCTestCase {
@@ -106,6 +107,66 @@ final class MacroExpansionTests: XCTestCase {
 
                 public static func resolve(in container: DIContainer) -> Foo {
                     Foo(bar: container.resolve(BarProtocol.self), baz: container.resolve(BazProtocol.self))
+                }
+
+                public static var auto: Foo {
+                    resolve(in: DIContainer.shared)
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    func testLazyInjectConstructorSynthesizesLazyProperties() {
+        assertMacroExpansion(
+            """
+            @LazyInjectConstructor
+            class Foo {
+                init(bar: BarProtocol, baz: BazProtocol) {
+                }
+            }
+            """,
+            expandedSource: """
+            class Foo {
+                init(bar: BarProtocol, baz: BazProtocol) {
+                }
+
+                @LazyInject private var bar: BarProtocol
+
+                @LazyInject private var baz: BazProtocol
+
+                public static func resolve(in container: DIContainer) -> Foo {
+                    Foo()
+                }
+
+                public static var auto: Foo {
+                    resolve(in: DIContainer.shared)
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    func testLazyInjectConstructorSkipsDefaultedParams() {
+        assertMacroExpansion(
+            """
+            @LazyInjectConstructor
+            class Foo {
+                init(bar: BarProtocol, sdk: SDKThing = SDKThing.shared()) {
+                }
+            }
+            """,
+            expandedSource: """
+            class Foo {
+                init(bar: BarProtocol, sdk: SDKThing = SDKThing.shared()) {
+                }
+
+                @LazyInject private var bar: BarProtocol
+
+                public static func resolve(in container: DIContainer) -> Foo {
+                    Foo()
                 }
 
                 public static var auto: Foo {

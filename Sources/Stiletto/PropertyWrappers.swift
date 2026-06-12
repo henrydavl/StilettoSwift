@@ -54,9 +54,8 @@ public struct Provides<T> {
 
     public init(wrappedValue: T, scope: DIContainer.Scope = .singleton) {
         self.wrappedValue = wrappedValue
-        if !DIContainer.shared.isRegistered(T.self) {
+        if DIContainer.shared.registerIfAbsent(T.self, scope: scope, factory: { wrappedValue }) {
             DIContainer.logHandler?("Registering \(T.self) with scope \(scope)")
-            DIContainer.shared.register(T.self, scope: scope, factory: { wrappedValue })
         } else {
             DIContainer.logHandler?("\(T.self) with scope \(scope) already registered")
         }

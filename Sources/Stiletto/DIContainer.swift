@@ -19,7 +19,9 @@ public final class DIContainer {
     public static var logHandler: ((String) -> Void)?
 
     // MARK: - Storage
-    private let lock = NSLock()
+    // Recursive so a factory can re-enter resolve() on the same thread while the
+    // container creates a cached instance under the lock (see resolve).
+    private let lock = NSRecursiveLock()
 
     private var singletons: [String: Any] = [:]
     private var factories: [String: () -> Any] = [:]
@@ -38,10 +40,19 @@ public final class DIContainer {
         case factory    // New instance every resolve
     }
 
-    /// Register a type with a factory and scope.
+    /// Register a type with a factory and scope. Last registration wins: any
+    /// previous factory, scope, or cached instance for the type is discarded —
+    /// otherwise a re-registration would be silently shadowed by the old scope's
+    /// entry (resolve checks scopes in order) or by an already-cached instance.
     public func register<T>(_ type: T.Type, scope: Scope = .factory, factory: @escaping () -> T) {
         let key = keyFor(type)
         lock.lock(); defer { lock.unlock() }
+
+        singletons[key] = nil
+        sessions[key] = nil
+        factories[key] = nil
+        appSingletons[key] = nil
+        sessionSingletons[key] = nil
 
         switch scope {
         case .singleton:
@@ -64,48 +75,41 @@ public final class DIContainer {
     }
 
     /// Resolve an instance for a type. If an instance is not present for session/app and a factory exists, a new instance will be created and cached.
+    ///
+    /// The lock is held while the factory runs: the recursive lock lets the
+    /// factory re-enter resolve() on this thread for its own dependencies, while
+    /// other threads wait — so a singleton/session factory runs exactly once and
+    /// every caller observes the same cached instance.
     public func resolve<T>(_ type: T.Type) -> T {
         let key = keyFor(type)
-        lock.lock()
+        lock.lock(); defer { lock.unlock() }
+
         // 1. App
         if let instance = appSingletons[key] as? T {
             Self.logHandler?("RESOLVE singleton (cached): \(key)")
-            lock.unlock()
             return instance
         }
-        // If missing but factory exists, recreate
         if let factory = singletons[key] as? () -> T {
-            lock.unlock()
             let newInstance = factory()
-            lock.lock()
             appSingletons[key] = newInstance
-            Self.logHandler?("RESOLVE singleton (recreated): \(key)")
-            lock.unlock()
+            Self.logHandler?("RESOLVE singleton (created): \(key)")
             return newInstance
         }
 
         // 2. Session
         if let instance = sessionSingletons[key] as? T {
             Self.logHandler?("RESOLVE session (cached): \(key)")
-            lock.unlock()
             return instance
         }
         if let factory = sessions[key] as? () -> T {
-            lock.unlock()
             let newInstance = factory()
-            lock.lock()
             sessionSingletons[key] = newInstance
-            Self.logHandler?("RESOLVE session (recreated): \(key)")
-            lock.unlock()
+            Self.logHandler?("RESOLVE session (created): \(key)")
             return newInstance
         }
 
         // 3. Factory
-        // Release the lock BEFORE invoking the factory: creating the instance may
-        // recursively resolve other dependencies on this same thread, and NSLock
-        // is non-recursive — calling factory() while holding the lock deadlocks.
         if let factory = factories[key] {
-            lock.unlock()
             guard let instance = factory() as? T else {
                 fatalError("No dependency found for \(key)")
             }
@@ -113,11 +117,14 @@ public final class DIContainer {
             return instance
         }
 
-        lock.unlock()
         fatalError("No dependency found for \(key)")
     }
 
-    private func keyFor<T>(_ type: T.Type) -> String { String(describing: type) }
+    /// Fully-qualified key (`String(reflecting:)`, e.g. "MyModule.Logger").
+    /// `String(describing:)` would give the bare name, so two types with the
+    /// same simple name in different modules would collide and silently
+    /// overwrite each other's binding.
+    private func keyFor<T>(_ type: T.Type) -> String { String(reflecting: type) }
 }
 
 public extension DIContainer {
@@ -142,5 +149,17 @@ public extension DIContainer {
         let key = keyFor(type)
         lock.lock(); defer { lock.unlock() }
         return singletons[key] != nil || sessions[key] != nil || factories[key] != nil || appSingletons[key] != nil || sessionSingletons[key] != nil
+    }
+
+    /// Registers the type only if nothing is registered for it yet, atomically —
+    /// a separate `isRegistered` check followed by `register` would race when two
+    /// threads register the same type concurrently.
+    /// - Returns: `true` if the registration was performed.
+    @discardableResult
+    func registerIfAbsent<T>(_ type: T.Type, scope: Scope = .factory, factory: @escaping () -> T) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !isRegistered(type) else { return false }
+        register(type, scope: scope, factory: factory)
+        return true
     }
 }
