@@ -1,5 +1,8 @@
 # Stiletto 🗡️
 
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fhenrydavl%2FStilettoSwift%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/henrydavl/StilettoSwift)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fhenrydavl%2FStilettoSwift%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/henrydavl/StilettoSwift)
+
 **Compile-time-checked dependency injection for Swift** — annotate your implementations, and the build figures out the rest.
 
 A *stiletto* is a slender dagger: this library brings the [Dagger](https://dagger.dev)/[Hilt](https://dagger.dev/hilt/) experience to Swift. Forgetting to register a dependency **fails your build** with a clear error — it never crashes at runtime. Registration order is computed for you. Moving a class between modules requires zero DI bookkeeping.
