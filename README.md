@@ -45,13 +45,15 @@ dependencies: [
 ]
 ```
 
-Attach to each target that declares bindings:
+Attach to each target that declares bindings. The `package:` argument is the
+package **identity** — for a URL dependency that's the repo name (`StilettoSwift`),
+not the library product name (`Stiletto`):
 
 ```swift
 .target(
     name: "MyModule",
-    dependencies: [.product(name: "Stiletto", package: "Stiletto")],
-    plugins: [.plugin(name: "StilettoPlugin", package: "Stiletto")]
+    dependencies: [.product(name: "Stiletto", package: "StilettoSwift")],
+    plugins: [.plugin(name: "StilettoPlugin", package: "StilettoSwift")]
 )
 ```
 
@@ -151,10 +153,45 @@ swift run --package-path <path-to-stiletto-checkout> StilettoGenerator \
     --validate Sources/ App/
 ```
 
-**Xcode app target:** add a Run Script phase *before* Compile Sources:
+**Xcode app target:** add a Run Script phase *before* Compile Sources. When Stiletto is consumed as an SPM dependency (the usual case), `StilettoGenerator` lives in Xcode's resolved package checkout — use this script, which locates it robustly for **both normal and Archive builds**:
 
 ```bash
-unset SDKROOT   # mandatory: the build phase inherits the iOS SDK, which breaks `swift run`
+# Whole-program DI graph validation. Fails the build if any
+# @Provide/@InjectConstructor dependency is unsatisfied across the whole app.
+unset SDKROOT   # mandatory: the phase inherits the iOS SDK, which breaks `swift run`
+
+# Anchor on the DerivedData root (everything before the first /Build/). This is
+# identical for normal AND Archive builds; BUILD_DIR itself points inside
+# .../ArchiveIntermediates/<scheme>/BuildProductsPath during an archive, so a
+# naive `${BUILD_DIR%/Build/Products*}` strip resolves to a path that does not
+# exist and the phase fails with "(l)stat: No such file or directory".
+DERIVED_ROOT="${BUILD_DIR%%/Build/*}"
+CHECKOUT="$DERIVED_ROOT/SourcePackages/checkouts/StilettoSwift"
+if [ ! -d "$CHECKOUT" ]; then
+    CHECKOUT="$(find "$DERIVED_ROOT" -maxdepth 6 -type d -path '*/SourcePackages/checkouts/StilettoSwift' 2>/dev/null | head -1)"
+fi
+if [ ! -d "$CHECKOUT" ]; then
+    echo "warning: StilettoSwift checkout not found under $DERIVED_ROOT; skipping whole-program validation (per-target validation still ran)"
+    exit 0
+fi
+
+# Copy the tool sources aside so building the generator never dirties the
+# read-only package checkout.
+TOOLS="${OBJROOT}/StilettoTools"
+mkdir -p "$TOOLS/src"
+rsync -a --delete --exclude .git --exclude Package.resolved "$CHECKOUT/" "$TOOLS/src/"
+swift run --package-path "$TOOLS/src" --scratch-path "$TOOLS/build" StilettoGenerator \
+    --validate "$SRCROOT/Modules" "$SRCROOT/MyApp"
+```
+
+> Replace `StilettoSwift` with your package's repo folder name (it's whatever the
+> last path component of your `.package(url:)` is, minus `.git`), and point
+> `--validate` at your own source roots.
+
+If you instead **vendor Stiletto as a local package** (`.package(path: …)`), the checkout dance isn't needed — just run it from your local copy:
+
+```bash
+unset SDKROOT
 swift run --package-path "$SRCROOT/path/to/Stiletto" StilettoGenerator \
     --validate "$SRCROOT/Modules" "$SRCROOT/MyApp"
 ```
