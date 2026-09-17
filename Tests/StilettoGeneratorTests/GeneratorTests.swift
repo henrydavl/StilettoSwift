@@ -58,6 +58,22 @@ final class GeneratorTests: XCTestCase {
         try runGenerator(["--validate", fixtureDir.path])
     }
 
+    private struct FileIdentity {
+        let contents: String
+        let modificationDate: Date
+        let inode: UInt64
+    }
+
+    /// Content plus the two things a rewrite churns even when the content is equal.
+    private func fileIdentity(of url: URL) throws -> FileIdentity {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return FileIdentity(
+            contents: try String(contentsOf: url, encoding: .utf8),
+            modificationDate: try XCTUnwrap(attributes[.modificationDate] as? Date),
+            inode: try XCTUnwrap(attributes[.systemFileNumber] as? UInt64)
+        )
+    }
+
     // MARK: - VALIDATE mode
 
     func testCompleteGraphValidates() throws {
@@ -247,6 +263,69 @@ final class GeneratorTests: XCTestCase {
         let clockIndex = generated.range(of: "SystemClock.__diRegister()")!.lowerBound
         let greeterIndex = generated.range(of: "Greeter.__diRegister()")!.lowerBound
         XCTAssertLessThan(clockIndex, greeterIndex)
+    }
+
+    func testRegeneratingIdenticalOutputDoesNotTouchTheFile() throws {
+        // A rewrite with identical content still gives the file a new mtime and
+        // inode (`atomically:` renames a temp file into place), which makes the
+        // build system recompile every target the plugin is attached to. The
+        // generator must skip the write when nothing changed.
+        let source = fixtureDir.appendingPathComponent("Leaf.swift")
+        try writeFixture("Leaf.swift", """
+        @Provide(ClockProtocol.self)
+        final class SystemClock: ClockProtocol {}
+        """)
+        let output = fixtureDir.appendingPathComponent("GeneratedDI.swift")
+        let arguments = ["--output", output.path, "--module", "TestModule", source.path]
+
+        let first = try runGenerator(arguments)
+        XCTAssertEqual(first.exitCode, 0, first.stderr)
+        let before = try fileIdentity(of: output)
+
+        // Coarse filesystem timestamps would hide a rewrite that lands in the
+        // same tick, so give the clock room to move.
+        Thread.sleep(forTimeInterval: 1.1)
+
+        let second = try runGenerator(arguments)
+        XCTAssertEqual(second.exitCode, 0, second.stderr)
+        let after = try fileIdentity(of: output)
+
+        XCTAssertEqual(after.contents, before.contents, "content should be stable across runs")
+        XCTAssertEqual(after.modificationDate, before.modificationDate, "identical output must not be rewritten")
+        XCTAssertEqual(after.inode, before.inode, "identical output must not be replaced by a new file")
+    }
+
+    func testRegeneratingChangedOutputRewritesTheFile() throws {
+        let source = fixtureDir.appendingPathComponent("Leaf.swift")
+        try writeFixture("Leaf.swift", """
+        @Provide(ClockProtocol.self)
+        final class SystemClock: ClockProtocol {}
+        """)
+        let output = fixtureDir.appendingPathComponent("GeneratedDI.swift")
+        let arguments = ["--output", output.path, "--module", "TestModule", source.path]
+
+        let first = try runGenerator(arguments)
+        XCTAssertEqual(first.exitCode, 0, first.stderr)
+        let before = try fileIdentity(of: output)
+
+        Thread.sleep(forTimeInterval: 1.1)
+
+        // A genuinely new provider must still reach the output.
+        try writeFixture("Leaf.swift", """
+        @Provide(ClockProtocol.self)
+        final class SystemClock: ClockProtocol {}
+
+        @Provide(LoggerProtocol.self)
+        final class ConsoleLogger: LoggerProtocol {}
+        """)
+
+        let second = try runGenerator(arguments)
+        XCTAssertEqual(second.exitCode, 0, second.stderr)
+        let after = try fileIdentity(of: output)
+
+        XCTAssertNotEqual(after.contents, before.contents, "changed inputs must change the output")
+        XCTAssertTrue(after.contents.contains("ConsoleLogger.__diRegister()"), after.contents)
+        XCTAssertGreaterThan(after.modificationDate, before.modificationDate, "changed output must be rewritten")
     }
 
     func testGenerateFailsOnIntraTargetCycle() throws {

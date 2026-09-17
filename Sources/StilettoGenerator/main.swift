@@ -45,6 +45,16 @@ func runGenerate(outputPath: String, moduleName: String, files: [String]) -> Nev
     }
 
     let outputURL = URL(fileURLWithPath: outputPath)
+
+    // Write only when the content actually changed. `atomically: true` renames a
+    // temp file into place, so an unconditional write hands the output a new inode
+    // and mtime on every run — the build system then sees a modified Swift source
+    // in every target the plugin is attached to and recompiles the whole module,
+    // even on a null build.
+    if let existing = try? String(contentsOf: outputURL, encoding: .utf8), existing == output {
+        exit(0)
+    }
+
     try? FileManager.default.createDirectory(
         at: outputURL.deletingLastPathComponent(),
         withIntermediateDirectories: true
