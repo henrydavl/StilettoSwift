@@ -60,6 +60,18 @@ not the library product name (`Stiletto`):
 )
 ```
 
+## Which annotation do I use?
+
+[**SKILL.md**](SKILL.md) is the decision guide: which macro to reach for per type, the
+anti-patterns that quietly opt you out of compile-time validation, and how to read the
+`error: DI graph:` failures. It doubles as a [Claude Code](https://claude.com/claude-code)
+skill — drop it into your app repo so coding sessions follow the same rules:
+
+```bash
+mkdir -p .claude/skills/stiletto && curl -sL -o .claude/skills/stiletto/SKILL.md \
+    https://raw.githubusercontent.com/henrydavl/StilettoSwift/main/SKILL.md
+```
+
 ## Usage
 
 ### Bind an implementation to a protocol
